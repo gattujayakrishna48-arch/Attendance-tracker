@@ -1,5 +1,7 @@
+import logging
 import os
 import sqlite3
+import traceback
 from datetime import date, datetime, timedelta
 from functools import wraps
 
@@ -18,6 +20,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-attendance-tracker-2026")
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 DATABASE = os.path.join(app.instance_path, "attendance.db")
 
@@ -124,7 +128,6 @@ def init_db():
 
 def seed_default_for_user(user_id, db):
     """Seed subjects and timetable for a user."""
-    # 1. Insert subjects
     subj_map = {}
     for name, short_name, color in DEFAULT_SUBJECTS:
         try:
@@ -141,7 +144,6 @@ def seed_default_for_user(user_id, db):
         if row:
             subj_map[short_name] = row["id"]
 
-    # 2. Insert timetable
     db.execute("DELETE FROM timetable WHERE user_id = ?", (user_id,))
     for day, period, short_name, start_t, end_t in DEFAULT_TIMETABLE_ENTRIES:
         if short_name in subj_map:
@@ -155,24 +157,52 @@ def seed_default_for_user(user_id, db):
 
 @app.before_request
 def ensure_db():
-    db = get_db()
-    table_check = db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
-    ).fetchone()
-    if not table_check:
-        init_db()
+    try:
+        db = get_db()
+        table_check = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+        if not table_check:
+            init_db()
 
-    # Create default demo student account if none exists
-    user_count = db.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
-    if user_count == 0:
-        db.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            ("student", generate_password_hash("password123")),
-        )
-        db.commit()
-        demo_user = db.execute("SELECT id FROM users WHERE username = 'student'").fetchone()
-        if demo_user:
-            seed_default_for_user(demo_user["id"], db)
+        user_count = db.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+        if user_count == 0:
+            db.execute(
+                "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                ("student", generate_password_hash("password123")),
+            )
+            db.commit()
+            demo_user = db.execute("SELECT id FROM users WHERE username = 'student'").fetchone()
+            if demo_user:
+                seed_default_for_user(demo_user["id"], db)
+    except Exception as e:
+        app.logger.error("Error in ensure_db: %s", e, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Global Error Handler
+# ---------------------------------------------------------------------------
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    app.logger.error("Unhandled Exception: %s", e, exc_info=True)
+    tb_str = traceback.format_exc()
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head><title>Internal Server Error</title>
+    <style>body{{font-family:sans-serif;padding:2rem;background:#fef2f2;color:#991b1b;}}
+    pre{{background:#fff;padding:1rem;border-radius:6px;border:1px solid #fca5a5;overflow:auto;}}
+    a{{color:#4f46e5;font-weight:bold;}}</style>
+    </head>
+    <body>
+        <h2>⚠️ Internal Server Error (500)</h2>
+        <p>An unexpected error occurred:</p>
+        <pre>{tb_str}</pre>
+        <p><a href="/">← Return to Safety</a></p>
+    </body>
+    </html>
+    """, 500
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +230,6 @@ def inject_helpers():
 
 @app.template_filter("time12")
 def time12_filter(t_str):
-    """Convert HH:MM to 12-hour format e.g. 09:30 -> 9:30 AM, 13:50 -> 1:50 PM."""
     if not t_str:
         return ""
     try:
@@ -249,7 +278,6 @@ def signup():
                 )
                 db.commit()
                 new_user_id = cursor.lastrowid
-                # Automatically seed timetable from college timetable
                 seed_default_for_user(new_user_id, db)
             except sqlite3.IntegrityError:
                 error = f"Username '{username}' is already taken."
@@ -339,7 +367,7 @@ def delete_subject(subject_id):
 
 
 # ---------------------------------------------------------------------------
-# Routes – Timetable (View and Update anytime)
+# Routes – Timetable
 # ---------------------------------------------------------------------------
 
 @app.route("/timetable", methods=["GET", "POST"])
@@ -352,16 +380,11 @@ def timetable():
         "SELECT * FROM subjects WHERE user_id = ? ORDER BY name", (user_id,)
     ).fetchall()
 
-    if not user_subjects:
-        flash("Please add your subjects first, or load the default timetable below!", "warning")
-
     if request.method == "POST":
-        # Clear existing timetable for this user
         db.execute("DELETE FROM timetable WHERE user_id = ?", (user_id,))
 
         for day in range(7):
             prefix = f"day{day}_period"
-            # Collect periods from form
             p_nums = set()
             for k in request.form:
                 if k.startswith(prefix) and k.endswith("_subject"):
@@ -370,11 +393,11 @@ def timetable():
                         p_nums.add(int(num_str))
 
             for new_period_idx, orig_p_num in enumerate(sorted(p_nums), start=1):
-                subj_id = request.form.get(f"day{day}_period{orig_p_num}_subject")
+                subj_id = request.form.get(f"day{day}_period{orig_p_num}_subject", "").strip()
                 start_time = request.form.get(f"day{day}_period{orig_p_num}_start", "").strip()
                 end_time = request.form.get(f"day{day}_period{orig_p_num}_end", "").strip()
 
-                if subj_id and start_time and end_time:
+                if subj_id and subj_id.isdigit() and start_time and end_time:
                     db.execute(
                         "INSERT INTO timetable (user_id, day_of_week, period_number, subject_id, start_time, end_time) "
                         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -385,7 +408,6 @@ def timetable():
         flash("Timetable updated successfully! You can change it anytime.", "success")
         return redirect(url_for("timetable"))
 
-    # Load existing timetable
     tt_rows = db.execute(
         "SELECT t.*, s.name AS subject_name, s.short_name, s.color "
         "FROM timetable t JOIN subjects s ON t.subject_id = s.id "
@@ -410,7 +432,6 @@ def timetable():
 @app.route("/timetable/reset-default", methods=["POST"])
 @login_required
 def reset_default_timetable():
-    """Reset to the official CSD Section-1 timetable from PDF."""
     db = get_db()
     seed_default_for_user(session["user_id"], db)
     flash("Loaded official Annamacharya CSD Section-1 timetable!", "success")
@@ -418,7 +439,7 @@ def reset_default_timetable():
 
 
 # ---------------------------------------------------------------------------
-# Routes – Dashboard (Period-wise Attendance)
+# Routes – Dashboard
 # ---------------------------------------------------------------------------
 
 @app.route("/dashboard")
@@ -427,23 +448,21 @@ def dashboard():
     db = get_db()
     user_id = session["user_id"]
 
-    # Support selecting any date (default is today)
     date_arg = request.args.get("date")
     if date_arg:
         try:
             view_date = datetime.strptime(date_arg, "%Y-%m-%d").date()
-        except ValueError:
+        except (ValueError, TypeError):
             view_date = date.today()
     else:
         view_date = date.today()
 
     today = date.today()
-    day_of_week = view_date.weekday()  # 0=Monday
+    day_of_week = view_date.weekday()
 
     prev_date = view_date - timedelta(days=1)
     next_date = view_date + timedelta(days=1)
 
-    # Get periods for the selected day from user's timetable
     today_periods = db.execute(
         "SELECT t.*, s.name AS subject_name, s.short_name, s.color "
         "FROM timetable t JOIN subjects s ON t.subject_id = s.id "
@@ -451,7 +470,6 @@ def dashboard():
         (user_id, day_of_week),
     ).fetchall()
 
-    # Get attendance for the viewed date
     attendance_records = db.execute(
         "SELECT * FROM attendance WHERE user_id = ? AND date = ?",
         (user_id, view_date.isoformat()),
@@ -465,7 +483,6 @@ def dashboard():
             "attendance_status": att_map.get(p["period_number"]),
         })
 
-    # Subject-wise attendance stats for the current month
     month_start = today.replace(day=1)
     subject_stats = db.execute(
         "SELECT s.id, s.name, s.short_name, s.color, "
@@ -480,7 +497,6 @@ def dashboard():
         (month_start.isoformat(), user_id),
     ).fetchall()
 
-    # Overall stats for current month
     overall = db.execute(
         "SELECT "
         "  COUNT(CASE WHEN status = 'present' THEN 1 END) AS present, "
@@ -490,7 +506,18 @@ def dashboard():
         (user_id, month_start.isoformat()),
     ).fetchone()
 
-    # Recent 7 days attendance summary
+    overall_present = (overall["present"] if overall else 0) or 0
+    overall_absent = (overall["absent"] if overall else 0) or 0
+    overall_total = (overall["total"] if overall else 0) or 0
+    overall_pct = round(overall_present * 100.0 / overall_total, 1) if overall_total > 0 else 0
+
+    overall_dict = {
+        "present": overall_present,
+        "absent": overall_absent,
+        "total": overall_total,
+        "pct": overall_pct,
+    }
+
     week_start = view_date - timedelta(days=6)
     recent_days = []
     for i in range(7):
@@ -513,7 +540,6 @@ def dashboard():
         "SELECT COUNT(*) AS c FROM timetable WHERE user_id = ?", (user_id,)
     ).fetchone()["c"] > 0
 
-    # Chart data
     chart_subjects = []
     for s in subject_stats:
         pct = round(s["present_count"] * 100.0 / s["total"], 1) if s["total"] > 0 else 0
@@ -528,10 +554,10 @@ def dashboard():
         })
 
     donut_data = {
-        "present": overall["present"] or 0,
-        "absent": overall["absent"] or 0,
-        "total": overall["total"] or 0,
-        "pct": round((overall["present"] or 0) * 100.0 / overall["total"], 1) if overall and overall["total"] else 0,
+        "present": overall_present,
+        "absent": overall_absent,
+        "total": overall_total,
+        "pct": overall_pct,
     }
 
     trend_data = {
@@ -550,7 +576,7 @@ def dashboard():
         day_name=DAY_NAMES[day_of_week],
         periods=periods,
         subject_stats=[dict(s) for s in subject_stats],
-        overall=overall,
+        overall=overall_dict,
         recent_days=recent_days,
         chart_subjects=chart_subjects,
         donut_data=donut_data,
@@ -571,6 +597,8 @@ def mark_attendance():
     marked_count = 0
     for key in period_keys:
         parts = key.split("_")  # period_1_subject_3
+        if len(parts) < 4 or not parts[1].isdigit() or not parts[3].isdigit():
+            continue
         period_num = int(parts[1])
         subject_id = int(parts[3])
         status = request.form.get(key)
@@ -598,13 +626,12 @@ def mark_attendance():
 @app.route("/mark-all", methods=["POST"])
 @login_required
 def mark_all():
-    """Mark all periods for the viewed day as present or absent."""
     db = get_db()
     user_id = session["user_id"]
     mark_date_str = request.form.get("date", date.today().isoformat())
     try:
         mark_date = datetime.strptime(mark_date_str, "%Y-%m-%d").date()
-    except ValueError:
+    except (ValueError, TypeError):
         mark_date = date.today()
 
     status = request.form.get("status")
@@ -644,4 +671,4 @@ def mark_all():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(host="127.0.0.1", port=5000, debug=False)
