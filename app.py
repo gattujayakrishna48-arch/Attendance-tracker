@@ -1,6 +1,8 @@
 import logging
 import os
+import shutil
 import sqlite3
+import tempfile
 import traceback
 from datetime import date, datetime, timedelta
 from functools import wraps
@@ -20,6 +22,15 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-attendance-tracker-2026")
+
+# Durable session cookie configuration for local and cloud deployments
+app.config.update(
+    SESSION_COOKIE_NAME="attendance_session",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=False,
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -104,8 +115,6 @@ DEFAULT_TIMETABLE_ENTRIES = [
 # Database helpers
 # ---------------------------------------------------------------------------
 
-import tempfile
-
 def get_db_path():
     """Return a safe writable SQLite database path for local or serverless environments."""
     env_path = os.environ.get("DATABASE_PATH")
@@ -113,7 +122,6 @@ def get_db_path():
         return env_path
 
     # On Vercel and AWS Lambda, the root deployment directory is read-only (/var/task).
-    # tempfile.gettempdir() resolves to /tmp on Linux/Vercel and system temp on other OS.
     is_serverless = (
         bool(os.environ.get("VERCEL"))
         or bool(os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
@@ -121,7 +129,17 @@ def get_db_path():
     )
 
     if is_serverless:
-        return os.path.join(tempfile.gettempdir(), "attendance.db")
+        tmp_db = os.path.join(tempfile.gettempdir(), "attendance.db")
+        # Initialize /tmp database from bundled seed.db if not yet copied
+        if not os.path.exists(tmp_db):
+            seed_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed.db")
+            if os.path.exists(seed_file):
+                try:
+                    shutil.copyfile(seed_file, tmp_db)
+                    app.logger.info("Initialized %s from seed.db", tmp_db)
+                except Exception as e:
+                    app.logger.warning("Could not copy seed.db: %s", e)
+        return tmp_db
 
     # Try local instance_path first; if read-only, fallback to temp directory
     try:
@@ -213,16 +231,21 @@ def ensure_db():
         if not table_check:
             init_db()
 
-        user_count = db.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
-        if user_count == 0:
+        # Always guarantee default 'student' account exists
+        student_user = db.execute(
+            "SELECT id FROM users WHERE LOWER(username) = 'student'"
+        ).fetchone()
+        if not student_user:
             db.execute(
-                "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO users (username, password_hash) VALUES (?, ?)",
                 ("student", generate_password_hash("password123")),
             )
             db.commit()
-            demo_user = db.execute("SELECT id FROM users WHERE username = 'student'").fetchone()
-            if demo_user:
-                seed_default_for_user(demo_user["id"], db)
+            student_user = db.execute(
+                "SELECT id FROM users WHERE LOWER(username) = 'student'"
+            ).fetchone()
+            if student_user:
+                seed_default_for_user(student_user["id"], db)
     except Exception as e:
         app.logger.error("Error in ensure_db: %s", e, exc_info=True)
 
@@ -340,24 +363,58 @@ def signup():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    # If already authenticated, redirect straight to dashboard
+    if "user_id" in session:
+        return redirect(url_for("dashboard"))
+
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
+
+        if not username or not password:
+            flash("Please enter both username and password.", "warning")
+            return render_template("login.html")
+
         db = get_db()
+        # Case-insensitive username lookup
         user = db.execute(
-            "SELECT * FROM users WHERE username = ?", (username,)
+            "SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (username,)
         ).fetchone()
 
         if user is None or not check_password_hash(user["password_hash"], password):
-            flash("Invalid username or password.", "danger")
+            flash("Invalid username or password. Please check your credentials.", "danger")
         else:
             session.clear()
+            session.permanent = True
             session["user_id"] = user["id"]
             session["username"] = user["username"]
-            flash(f"Welcome, {user['username']}!", "success")
+            flash(f"Welcome back, {user['username']}!", "success")
             return redirect(url_for("dashboard"))
 
     return render_template("login.html")
+
+
+@app.route("/demo-login", methods=["GET", "POST"])
+def demo_login():
+    """1-Click login for the demo student account."""
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE LOWER(username) = 'student'").fetchone()
+    if not user:
+        db.execute(
+            "INSERT OR REPLACE INTO users (username, password_hash) VALUES (?, ?)",
+            ("student", generate_password_hash("password123")),
+        )
+        db.commit()
+        user = db.execute("SELECT * FROM users WHERE LOWER(username) = 'student'").fetchone()
+        if user:
+            seed_default_for_user(user["id"], db)
+
+    session.clear()
+    session.permanent = True
+    session["user_id"] = user["id"]
+    session["username"] = user["username"]
+    flash("Signed in successfully as Demo Student!", "success")
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/logout")

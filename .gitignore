@@ -6,6 +6,7 @@ __pycache__/
 # SQLite databases & instances
 instance/
 *.db
+!seed.db
 *.sqlite
 *.sqlite3
 
