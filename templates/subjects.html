@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Subjects – Attendance Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>📚 My Subjects</h2>
+</div>
+
+<!-- Add Subject Form -->
+<div class="card">
+    <h3>Add New Subject</h3>
+    <form method="POST" action="{{ url_for('subjects') }}" class="subject-form">
+        <div class="form-row">
+            <div class="form-group flex-2">
+                <label for="name">Subject Name</label>
+                <input type="text" id="name" name="name" required placeholder="e.g. Mathematics">
+            </div>
+            <div class="form-group flex-1">
+                <label for="short_name">Short Name</label>
+                <input type="text" id="short_name" name="short_name" required maxlength="5" placeholder="e.g. MATH">
+            </div>
+            <div class="form-group">
+                <label for="color">Color</label>
+                <div class="color-picker">
+                    {% for c in colors %}
+                    <label class="color-option">
+                        <input type="radio" name="color" value="{{ c }}" {% if loop.first %}checked{% endif %}>
+                        <span class="color-swatch" style="background: {{ c }};"></span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Add Subject</button>
+    </form>
+</div>
+
+<!-- Subject List -->
+{% if subjects %}
+<div class="card">
+    <h3>Your Subjects</h3>
+    <div class="subject-list">
+        {% for s in subjects %}
+        <div class="subject-item">
+            <div class="subject-info">
+                <span class="subject-dot" style="background: {{ s.color }};"></span>
+                <span class="subject-name">{{ s.name }}</span>
+                <span class="subject-short">({{ s.short_name }})</span>
+            </div>
+            <form method="POST" action="{{ url_for('delete_subject', subject_id=s.id) }}" class="inline-form">
+                <button type="submit" class="btn btn-sm btn-danger-outline" onclick="return confirm('Delete {{ s.name }}? This will also remove related timetable entries and attendance records.')">🗑️</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div style="margin-top: 1rem;">
+    <a href="{{ url_for('timetable') }}" class="btn btn-outline">➡️ Set Up Timetable</a>
+</div>
+{% endblock %}
+

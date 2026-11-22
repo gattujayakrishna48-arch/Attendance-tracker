@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – Attendance Tracker{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <!-- Date Navigation Header -->
+    <div class="dash-header">
+        <div>
+            <h2>📅 {{ day_name }}, {{ view_date.strftime('%d %B %Y') }}</h2>
+            <p class="text-muted" style="margin: 0;">
+                {% if is_today %}
+                    <span class="badge-today">● Today's Schedule</span>
+                {% else %}
+                    Viewing past/future date: {{ view_date.strftime('%Y-%m-%d') }}
+                {% endif %}
+                • {{ month_label }}
+            </p>
+        </div>
+        
+        <!-- Date Selector Navigation -->
+        <div class="date-nav-controls">
+            <a href="{{ url_for('dashboard', date=prev_date.isoformat()) }}" class="btn btn-sm btn-outline" title="Previous Day">◀ Prev</a>
+            <form method="GET" action="{{ url_for('dashboard') }}" style="display:inline-flex; align-items: center; gap: .3rem;">
+                <input type="date" name="date" value="{{ view_date.isoformat() }}" onchange="this.form.submit()" class="date-input">
+            </form>
+            {% if not is_today %}
+            <a href="{{ url_for('dashboard', date=today.isoformat()) }}" class="btn btn-sm btn-primary">Today</a>
+            {% endif %}
+            <a href="{{ url_for('dashboard', date=next_date.isoformat()) }}" class="btn btn-sm btn-outline" title="Next Day">Next ▶</a>
+        </div>
+    </div>
+
+    {% if not has_timetable %}
+    <div class="card setup-prompt">
+        <h3>🚀 Get Started</h3>
+        <p>Your timetable is currently empty. You can set it up manually or load the official CSD Section-1 schedule with 1 click!</p>
+        <div class="setup-steps">
+            <form method="POST" action="{{ url_for('reset_default_timetable') }}" style="display:inline;">
+                <button type="submit" class="btn btn-primary">📥 Load CSD Section-1 Timetable</button>
+            </form>
+            <a href="{{ url_for('timetable') }}" class="btn btn-outline">✏️ Custom Timetable</a>
+        </div>
+    </div>
+    {% else %}
+
+    <!-- Periods for Viewed Date -->
+    <div class="card">
+        <div class="card-header">
+            <div>
+                <h3 style="margin: 0;">📝 {{ day_name }} Attendance</h3>
+                <span class="text-muted" style="font-size: .85rem;">Mark each period as Present or Absent</span>
+            </div>
+            {% if periods %}
+            <div class="quick-actions">
+                <form method="POST" action="{{ url_for('mark_all') }}" style="display:inline">
+                    <input type="hidden" name="date" value="{{ view_date.isoformat() }}">
+                    <input type="hidden" name="status" value="present">
+                    <button type="submit" class="btn btn-sm btn-success" title="Mark all periods present">✅ All Present</button>
+                </form>
+                <form method="POST" action="{{ url_for('mark_all') }}" style="display:inline">
+                    <input type="hidden" name="date" value="{{ view_date.isoformat() }}">
+                    <input type="hidden" name="status" value="absent">
+                    <button type="submit" class="btn btn-sm btn-danger" title="Mark all periods absent">❌ All Absent</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if periods %}
+        <form method="POST" action="{{ url_for('mark_attendance') }}">
+            <input type="hidden" name="date" value="{{ view_date.isoformat() }}">
+            <div class="periods-list">
+                {% for p in periods %}
+                <div class="period-row {% if p.attendance_status %}marked-{{ p.attendance_status }}{% endif %}">
+                    <div class="period-info">
+                        <span class="period-number">P{{ p.period_number }}</span>
+                        <div class="period-details">
+                            <span class="period-subject" style="background: {{ p.color }}20; color: {{ p.color }}; border-left: 3px solid {{ p.color }};">
+                                {{ p.short_name }}
+                            </span>
+                            <span class="period-full-name">{{ p.subject_name }}</span>
+                        </div>
+                        <span class="period-time">⏰ {{ p.start_time|time12 }} – {{ p.end_time|time12 }}</span>
+                    </div>
+                    <div class="period-actions">
+                        <label class="radio-btn present-btn {% if p.attendance_status == 'present' %}selected{% endif %}">
+                            <input type="radio"
+                                   name="period_{{ p.period_number }}_subject_{{ p.subject_id }}"
+                                   value="present"
+                                   {% if p.attendance_status == 'present' %}checked{% endif %}>
+                            <span>✅ Present</span>
+                        </label>
+                        <label class="radio-btn absent-btn {% if p.attendance_status == 'absent' %}selected{% endif %}">
+                            <input type="radio"
+                                   name="period_{{ p.period_number }}_subject_{{ p.subject_id }}"
+                                   value="absent"
+                                   {% if p.attendance_status == 'absent' %}checked{% endif %}>
+                            <span>❌ Absent</span>
+                        </label>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            <button type="submit" class="btn btn-primary btn-block" style="margin-top: 1.2rem; font-size: 1.05rem; padding: .75rem;">
+                💾 Save Attendance for {{ view_date.strftime('%d %b %Y') }}
+            </button>
+        </form>
+        {% else %}
+        <div style="text-align: center; padding: 2.5rem 1rem; color: #64748b;">
+            <p style="font-size: 1.2rem; margin-bottom: .5rem;">🎉 No periods scheduled for {{ day_name }}.</p>
+            <p style="font-size: .9rem;">You can update your timetable anytime in the <a href="{{ url_for('timetable') }}">Timetable</a> section.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Monthly Overall Stats -->
+    <div class="stats-row">
+        <div class="stat-card stat-present">
+            <div class="stat-number">{{ overall.present or 0 }}</div>
+            <div class="stat-label">Present</div>
+        </div>
+        <div class="stat-card stat-absent">
+            <div class="stat-number">{{ overall.absent or 0 }}</div>
+            <div class="stat-label">Absent</div>
+        </div>
+        <div class="stat-card stat-total">
+            <div class="stat-number">{{ overall.total or 0 }}</div>
+            <div class="stat-label">Total Periods</div>
+        </div>
+        <div class="stat-card stat-percent">
+            <div class="stat-number">
+                {% if overall.total and overall.total > 0 %}
+                    {{ ((overall.present or 0) * 100 / overall.total) | round(1) }}%
+                {% else %}
+                    –
+                {% endif %}
+            </div>
+            <div class="stat-label">Overall %</div>
+        </div>
+    </div>
+
+    <!-- Attendance Graphs & Visual Analytics -->
+    <div class="card charts-card">
+        <div class="card-header">
+            <div>
+                <h3 style="margin: 0;">📈 Attendance Visual Graphs</h3>
+                <span class="text-muted" style="font-size: .85rem;">Interactive visual breakdown of your attendance</span>
+            </div>
+            <div class="chart-toggles">
+                <button type="button" class="btn btn-sm chart-toggle-btn active" data-chart="all">All Graphs</button>
+                <button type="button" class="btn btn-sm chart-toggle-btn" data-chart="subjects">Subject %</button>
+                <button type="button" class="btn btn-sm chart-toggle-btn" data-chart="ratio">Present vs Absent</button>
+                <button type="button" class="btn btn-sm chart-toggle-btn" data-chart="trend">7-Day Trend</button>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <!-- 1. Subject-wise Bar Graph -->
+            <div class="chart-box" id="box-subjects">
+                <h4>📊 Subject Attendance Percentage (%)</h4>
+                <div class="chart-canvas-wrapper">
+                    <canvas id="subjectBarChart"></canvas>
+                </div>
+            </div>
+
+            <!-- 2. Overall Ratio Donut Graph -->
+            <div class="chart-box" id="box-ratio">
+                <h4>🍩 Present vs Absent Ratio</h4>
+                <div class="chart-canvas-wrapper donut-wrapper">
+                    <canvas id="overallDonutChart"></canvas>
+                </div>
+            </div>
+
+            <!-- 3. Daily Trend Line/Bar Graph -->
+            <div class="chart-box full-width" id="box-trend">
+                <h4>📆 Daily Attendance Trend (Last 7 Days)</h4>
+                <div class="chart-canvas-wrapper">
+                    <canvas id="dailyTrendChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden JSON payload for charts -->
+    <script type="application/json" id="chartDataJson">
+        {
+            "subjects": {{ chart_subjects | tojson }},
+            "donut": {{ donut_data | tojson }},
+            "trend": {{ trend_data | tojson }}
+        }
+    </script>
+
+    <!-- Subject-wise Attendance Breakdown -->
+    {% if subject_stats %}
+    <div class="card">
+        <div class="card-header">
+            <h3>📊 Subject-wise Attendance ({{ month_label }})</h3>
+            <span class="text-muted" style="font-size: .85rem;">Target: ≥ 75%</span>
+        </div>
+        <div class="subject-stats">
+            {% for s in subject_stats %}
+            {% set pct = (s.present_count * 100 / s.total) | round(1) if s.total > 0 else 0 %}
+            <div class="subject-stat-row">
+                <div class="subject-info">
+                    <span class="subject-dot" style="background: {{ s.color }};"></span>
+                    <div>
+                        <div class="subject-name">{{ s.name }}</div>
+                        <div class="subject-short">{{ s.short_name }}</div>
+                    </div>
+                </div>
+                <div class="subject-bar-wrap">
+                    <div class="subject-bar">
+                        <div class="subject-bar-fill" style="width: {{ pct }}%; background: {% if pct >= 75 %}#16a34a{% elif pct >= 65 %}#f59e0b{% else %}#dc2626{% endif %};"></div>
+                    </div>
+                    <span class="subject-pct" style="color: {% if pct >= 75 %}#16a34a{% elif pct >= 65 %}#d97706{% else %}#dc2626{% endif %};">
+                        {{ pct }}%
+                    </span>
+                </div>
+                <div class="subject-counts">
+                    <span class="count-present">{{ s.present_count }} Present</span> /
+                    <span class="count-absent">{{ s.absent_count }} Absent</span>
+                    <span class="count-total">({{ s.total }} Total)</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Recent 7 Days Strip -->
+    <div class="card">
+        <div class="card-header">
+            <h3>📆 Quick Day Navigation (Last 7 Days)</h3>
+            <span class="text-muted" style="font-size: .85rem;">Click any day to view or mark attendance</span>
+        </div>
+        <div class="recent-days">
+            {% for day in recent_days %}
+            <a href="{{ url_for('dashboard', date=day.date.isoformat()) }}"
+               class="recent-day-link recent-day {% if day.is_selected %}selected-day{% elif day.is_today %}today{% endif %}">
+                <div class="recent-day-header">
+                    <strong>{{ day.day_name[:3] }}</strong>
+                    <span>{{ day.date.strftime('%d/%m') }}</span>
+                </div>
+                <div class="recent-day-pills">
+                    {% if day.records %}
+                        {% for r in day.records %}
+                        <span class="pill pill-{{ r.status }}" title="{{ r.short_name }}: {{ r.status }}">
+                            {{ r.short_name }}
+                        </span>
+                        {% endfor %}
+                    {% else %}
+                        <span class="text-muted" style="font-size: .75rem;">No records</span>
+                    {% endif %}
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+{% endblock %}

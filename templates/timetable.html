@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Timetable – Attendance Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+    <div>
+        <h2>🗓️ Class Time Table</h2>
+        <p class="text-muted">II B. Tech I Semester (Section-1) • Dept of CSD • Room A409</p>
+    </div>
+    <div style="display: flex; gap: .5rem; flex-wrap: wrap;">
+        <a href="#editor-section" class="btn btn-outline btn-sm">✏️ Edit Timetable</a>
+        <form method="POST" action="{{ url_for('reset_default_timetable') }}" onsubmit="return confirm('Reset timetable to official CSD Section-1 schedule?');" style="display:inline;">
+            <button type="submit" class="btn btn-sm btn-outline">🔄 Reset to CSD Schedule</button>
+        </form>
+    </div>
+</div>
+
+<!-- Weekly Timetable Grid View (like college schedule) -->
+<div class="card">
+    <div class="card-header">
+        <h3>📋 Weekly Schedule Overview</h3>
+        <span class="badge" style="background: #e0e7ff; color: #4338ca; padding: .3rem .6rem; border-radius: 6px; font-weight: 600; font-size: .8rem;">Room: A409</span>
+    </div>
+    <div class="timetable-grid-wrapper" style="overflow-x: auto;">
+        <table class="timetable-table">
+            <thead>
+                <tr>
+                    <th style="min-width: 90px;">Day</th>
+                    <th>P1<br><small>09:30-10:20</small></th>
+                    <th>P2<br><small>10:20-11:10</small></th>
+                    <th>P3<br><small>11:10-12:00</small></th>
+                    <th>P4<br><small>12:00-12:50</small></th>
+                    <th class="th-lunch">LUNCH<br><small>12:50-01:50</small></th>
+                    <th>P5<br><small>01:50-02:40</small></th>
+                    <th>P6<br><small>02:40-03:30</small></th>
+                    <th>P7<br><small>03:30-04:20</small></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for day_num in range(6) %}
+                <tr>
+                    <td class="td-day"><strong>{{ DAY_NAMES[day_num][:3] }}</strong></td>
+                    {% set day_entries = timetable.get(day_num, []) %}
+                    
+                    {# Periods 1 to 4 #}
+                    {% for p_num in range(1, 5) %}
+                        {% set match = None %}
+                        {% for e in day_entries %}
+                            {% if e.period_number == p_num %}
+                                {% set match = e %}
+                                <td class="td-period" style="background: {{ e.color }}15; border-left: 3px solid {{ e.color }};">
+                                    <div class="tt-cell-subject" style="color: {{ e.color }};">{{ e.short_name }}</div>
+                                    <div class="tt-cell-time">{{ e.start_time|time12 }}</div>
+                                </td>
+                            {% endif %}
+                        {% endfor %}
+                        {% if not match %}
+                            <td class="td-empty">—</td>
+                        {% endif %}
+                    {% endfor %}
+
+                    {# Lunch break cell #}
+                    {% if loop.first %}
+                    <td rowspan="6" class="td-lunch">
+                        <span>L<br>U<br>N<br>C<br>H</span>
+                    </td>
+                    {% endif %}
+
+                    {# Periods 5 to 7 #}
+                    {% for p_num in range(5, 8) %}
+                        {% set match = None %}
+                        {% for e in day_entries %}
+                            {% if e.period_number == p_num %}
+                                {% set match = e %}
+                                <td class="td-period" style="background: {{ e.color }}15; border-left: 3px solid {{ e.color }};">
+                                    <div class="tt-cell-subject" style="color: {{ e.color }};">{{ e.short_name }}</div>
+                                    <div class="tt-cell-time">{{ e.start_time|time12 }}</div>
+                                </td>
+                            {% endif %}
+                        {% endfor %}
+                        {% if not match %}
+                            <td class="td-empty">—</td>
+                        {% endif %}
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Interactive Timetable Editor -->
+<div class="card" id="editor-section">
+    <div class="card-header">
+        <div>
+            <h3>✏️ Update Timetable Anytime</h3>
+            <p class="text-muted" style="margin: 0; font-size: .9rem;">Add, delete, or change subjects and timings for any day. Hit <strong>Save Timetable</strong> when done.</p>
+        </div>
+        <a href="{{ url_for('subjects') }}" class="btn btn-sm btn-outline">+ Manage Subjects</a>
+    </div>
+
+    <form method="POST" action="{{ url_for('timetable') }}" id="timetableForm">
+        <div class="timetable-container">
+            {% for day_num in range(7) %}
+            <div class="tt-day-card card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: .75rem; border-bottom: 2px solid #e2e8f0; padding-bottom: .4rem;">
+                    <h4 class="tt-day-title" style="margin: 0;">{{ DAY_NAMES[day_num] }}</h4>
+                    {% if day_num == 6 %}
+                    <span class="text-muted" style="font-size: .75rem;">(Sunday)</span>
+                    {% endif %}
+                </div>
+                <div class="tt-periods" id="day{{ day_num }}_periods">
+                    {% if timetable.get(day_num) %}
+                        {% for entry in timetable[day_num] %}
+                        <div class="tt-period-row">
+                            <span class="tt-period-label">P{{ entry.period_number }}</span>
+                            <select name="day{{ day_num }}_period{{ entry.period_number }}_subject" required>
+                                <option value="">— Subject —</option>
+                                {% for s in subjects %}
+                                <option value="{{ s.id }}" {% if s.id == entry.subject_id %}selected{% endif %}>
+                                    {{ s.short_name }} ({{ s.name[:25] }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <input type="time" name="day{{ day_num }}_period{{ entry.period_number }}_start"
+                                   value="{{ entry.start_time }}" required title="Start Time">
+                            <span style="font-size: .8rem; color: #94a3b8;">to</span>
+                            <input type="time" name="day{{ day_num }}_period{{ entry.period_number }}_end"
+                                   value="{{ entry.end_time }}" required title="End Time">
+                            <button type="button" class="btn-icon btn-remove" onclick="removePeriod(this)" title="Remove Period">✕</button>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted no-periods-msg" style="font-size: .85rem; padding: .5rem 0;">No periods scheduled.</p>
+                    {% endif %}
+                </div>
+                <button type="button" class="btn btn-sm btn-outline add-period-btn"
+                        onclick="addPeriod({{ day_num }})">+ Add Period</button>
+            </div>
+            {% endfor %}
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block" style="margin-top: 1.5rem; font-size: 1.1rem; padding: .8rem;">💾 Save Timetable Changes</button>
+    </form>
+</div>
+
+<!-- Subject options template for dynamic JS rows -->
+<template id="subjectOptions">
+    <option value="">— Subject —</option>
+    {% for s in subjects %}
+    <option value="{{ s.id }}">{{ s.short_name }} ({{ s.name[:25] }})</option>
+    {% endfor %}
+</template>
+
+{% endblock %}
