@@ -424,6 +424,71 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/reset-password", methods=["GET", "POST"])
+def reset_password():
+    """Allow users to reset or change their password."""
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        new_password = request.form.get("new_password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if not username or not new_password:
+            flash("Username and new password are required.", "danger")
+            return render_template("reset_password.html")
+
+        if len(new_password) < 6:
+            flash("Password must be at least 6 characters long.", "danger")
+            return render_template("reset_password.html")
+
+        if new_password != confirm_password:
+            flash("Passwords do not match.", "danger")
+            return render_template("reset_password.html")
+
+        db = get_db()
+        user = db.execute(
+            "SELECT id, username FROM users WHERE LOWER(username) = LOWER(?)", (username,)
+        ).fetchone()
+
+        if not user:
+            flash(f"User '{username}' was not found. Please check spelling or create an account.", "danger")
+            return render_template("reset_password.html")
+
+        db.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (generate_password_hash(new_password), user["id"]),
+        )
+        db.commit()
+        flash(f"Password reset successfully for {user['username']}! You can now log in.", "success")
+        return redirect(url_for("login"))
+
+    return render_template("reset_password.html")
+
+
+@app.route("/clear-day-attendance", methods=["POST"])
+@login_required
+def clear_day_attendance():
+    """Clear and unmark attendance for a specific date."""
+    db = get_db()
+    user_id = session["user_id"]
+    date_str = request.form.get("date", date.today().isoformat())
+    db.execute("DELETE FROM attendance WHERE user_id = ? AND date = ?", (user_id, date_str))
+    db.commit()
+    flash(f"Cleared marked attendance records for {date_str}!", "info")
+    return redirect(url_for("dashboard", date=date_str))
+
+
+@app.route("/reset-all-attendance", methods=["POST"])
+@login_required
+def reset_all_attendance():
+    """Reset all attendance history for the logged in user."""
+    db = get_db()
+    user_id = session["user_id"]
+    db.execute("DELETE FROM attendance WHERE user_id = ?", (user_id,))
+    db.commit()
+    flash("All attendance records have been reset! Your statistics are now fresh at 0%.", "info")
+    return redirect(url_for("dashboard"))
+
+
 # ---------------------------------------------------------------------------
 # Routes – Subjects
 # ---------------------------------------------------------------------------

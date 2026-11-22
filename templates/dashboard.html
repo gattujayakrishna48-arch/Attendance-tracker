@@ -62,6 +62,12 @@
                     <input type="hidden" name="status" value="absent">
                     <button type="submit" class="btn btn-sm btn-danger" title="Mark all periods absent">❌ All Absent</button>
                 </form>
+                <form method="POST" action="{{ url_for('clear_day_attendance') }}" style="display:inline" onsubmit="return confirm('Reset and unmark all periods for {{ view_date.strftime('%d %b %Y') }}?');">
+                    <input type="hidden" name="date" value="{{ view_date.isoformat() }}">
+                    <button type="submit" class="btn btn-sm btn-outline" title="Clear/Unmark all periods for this day" style="border-color: #cbd5e1; color: #64748b;">
+                        🔄 Reset Day
+                    </button>
+                </form>
             </div>
             {% endif %}
         </div>
@@ -254,6 +260,36 @@
                 </div>
             </a>
             {% endfor %}
+        </div>
+    </div>
+
+    <!-- Reset & Account Management Options -->
+    <div class="card" style="border-top: 3px solid #cbd5e1;">
+        <div class="card-header">
+            <div>
+                <h3 style="margin: 0; font-size: 1.1rem;">⚙️ Reset & Management Options</h3>
+                <span class="text-muted" style="font-size: .85rem;">Reset specific records or restore defaults anytime</span>
+            </div>
+        </div>
+        <div style="display: flex; gap: .75rem; flex-wrap: wrap;">
+            <!-- Reset Timetable -->
+            <form method="POST" action="{{ url_for('reset_default_timetable') }}" onsubmit="return confirm('Reset your timetable to the official CSD Section-1 schedule?');" style="display:inline;">
+                <button type="submit" class="btn btn-sm btn-outline">
+                    🔄 Reset Timetable
+                </button>
+            </form>
+
+            <!-- Reset All Attendance Records -->
+            <form method="POST" action="{{ url_for('reset_all_attendance') }}" onsubmit="return confirm('⚠️ WARNING: This will permanently delete ALL your attendance records and reset all percentages to 0%. Are you sure?');" style="display:inline;">
+                <button type="submit" class="btn btn-sm btn-danger-outline">
+                    🗑️ Reset All Attendance History
+                </button>
+            </form>
+
+            <!-- Reset Password Link -->
+            <a href="{{ url_for('reset_password') }}" class="btn btn-sm btn-outline" style="border-color: #cbd5e1; color: #475569;">
+                🔑 Reset Password
+            </a>
         </div>
     </div>
 

@@ -37,7 +37,10 @@
         </button>
     </form>
 
-    <div style="margin-top: 1.25rem; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 1rem;">
+    <div style="margin-top: 1.25rem; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 1rem; display: flex; flex-direction: column; gap: .5rem;">
+        <p class="auth-footer" style="margin: 0;">
+            <a href="{{ url_for('reset_password') }}" style="color: #64748b; font-size: .85rem;">🔑 Forgot / Reset Password?</a>
+        </p>
         <p class="auth-footer" style="margin: 0;">
             New student? <a href="{{ url_for('signup') }}" style="font-weight: 600;">Create an account</a>
         </p>
