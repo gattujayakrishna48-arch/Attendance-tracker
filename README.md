@@ -94,3 +94,4 @@ attendance-tracker/
 
 ## 📜 License
 MIT
+

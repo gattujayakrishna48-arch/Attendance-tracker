@@ -107,9 +107,15 @@ DEFAULT_TIMETABLE_ENTRIES = [
 def get_db():
     if "db" not in g:
         os.makedirs(app.instance_path, exist_ok=True)
-        g.db = sqlite3.connect(DATABASE)
+        # High-concurrency SQLite configuration for 100+ simultaneous users
+        g.db = sqlite3.connect(DATABASE, timeout=30.0, check_same_thread=False)
         g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        g.db.execute("PRAGMA foreign_keys = ON;")
+        g.db.execute("PRAGMA journal_mode = WAL;")     # Non-blocking concurrent reads & writes
+        g.db.execute("PRAGMA synchronous = NORMAL;")   # Fast, safe disk writes with WAL
+        g.db.execute("PRAGMA busy_timeout = 30000;")   # Wait up to 30s instead of locking out
+        g.db.execute("PRAGMA cache_size = -64000;")    # 64MB memory page cache
+        g.db.execute("PRAGMA temp_store = MEMORY;")    # In-memory temp tables
     return g.db
 
 
@@ -667,8 +673,34 @@ def mark_all():
 
 
 # ---------------------------------------------------------------------------
-# Run
+# Run (Production WSGI - Multi-threaded for 100+ concurrent users)
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    import sys
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+    try:
+        from waitress import serve
+        print("=" * 65)
+        print(">> ATTENDANCE TRACKER - PRODUCTION SERVER READY")
+        print(">> Engine: Waitress WSGI (Multi-threaded Production Server)")
+        print(">> Threads: 24 Concurrent Workers | Connection Limit: 300")
+        print(">> Database: SQLite in WAL Mode (Concurrent Non-blocking Reads/Writes)")
+        print(">> Local Access:   http://127.0.0.1:5000")
+        print(">> Network Access: http://0.0.0.0:5000")
+        print("=" * 65)
+        serve(
+            app,
+            host="0.0.0.0",
+            port=5000,
+            threads=24,
+            connection_limit=300,
+            channel_timeout=30,
+        )
+    except ImportError:
+        print("Waitress not found, falling back to threaded Flask...")
+        app.run(host="0.0.0.0", port=5000, threaded=True)
