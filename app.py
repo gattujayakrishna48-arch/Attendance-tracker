@@ -23,7 +23,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-attendance-tracker-2026")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-DATABASE = os.path.join(app.instance_path, "attendance.db")
+# Database path is resolved dynamically via get_db_path() to support serverless (Vercel/Lambda)
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -104,14 +104,51 @@ DEFAULT_TIMETABLE_ENTRIES = [
 # Database helpers
 # ---------------------------------------------------------------------------
 
+import tempfile
+
+def get_db_path():
+    """Return a safe writable SQLite database path for local or serverless environments."""
+    env_path = os.environ.get("DATABASE_PATH")
+    if env_path:
+        return env_path
+
+    # On Vercel and AWS Lambda, the root deployment directory is read-only (/var/task).
+    # tempfile.gettempdir() resolves to /tmp on Linux/Vercel and system temp on other OS.
+    is_serverless = (
+        bool(os.environ.get("VERCEL"))
+        or bool(os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+        or "/var/task" in os.path.abspath(__file__)
+    )
+
+    if is_serverless:
+        return os.path.join(tempfile.gettempdir(), "attendance.db")
+
+    # Try local instance_path first; if read-only, fallback to temp directory
+    try:
+        os.makedirs(app.instance_path, exist_ok=True)
+        return os.path.join(app.instance_path, "attendance.db")
+    except (OSError, PermissionError):
+        return os.path.join(tempfile.gettempdir(), "attendance.db")
+
+
 def get_db():
     if "db" not in g:
-        os.makedirs(app.instance_path, exist_ok=True)
+        db_path = get_db_path()
+        db_dir = os.path.dirname(db_path)
+        if db_dir and not os.path.exists(db_dir):
+            try:
+                os.makedirs(db_dir, exist_ok=True)
+            except (OSError, PermissionError):
+                pass
+
         # High-concurrency SQLite configuration for 100+ simultaneous users
-        g.db = sqlite3.connect(DATABASE, timeout=30.0, check_same_thread=False)
+        g.db = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON;")
-        g.db.execute("PRAGMA journal_mode = WAL;")     # Non-blocking concurrent reads & writes
+        try:
+            g.db.execute("PRAGMA journal_mode = WAL;")     # Non-blocking concurrent reads & writes
+        except sqlite3.OperationalError:
+            pass
         g.db.execute("PRAGMA synchronous = NORMAL;")   # Fast, safe disk writes with WAL
         g.db.execute("PRAGMA busy_timeout = 30000;")   # Wait up to 30s instead of locking out
         g.db.execute("PRAGMA cache_size = -64000;")    # 64MB memory page cache
@@ -128,8 +165,13 @@ def close_db(exc):
 
 def init_db():
     db = get_db()
-    with app.open_resource("schema.sql") as f:
-        db.executescript(f.read().decode("utf-8"))
+    schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
+    if os.path.exists(schema_path):
+        with open(schema_path, "r", encoding="utf-8") as f:
+            db.executescript(f.read())
+    else:
+        with app.open_resource("schema.sql") as f:
+            db.executescript(f.read().decode("utf-8"))
 
 
 def seed_default_for_user(user_id, db):
